@@ -70,6 +70,8 @@ canvas{display:block;cursor:crosshair}
     <div id="ability-list" style="font-size:10px;color:#3fb950;line-height:1.9"></div>
     <div class="stt" style="margin-top:4px">強化</div>
     <div id="upg-info" style="font-size:10px;color:#8b949e;line-height:1.7"></div>
+    <div class="stt" style="margin-top:4px">武器セットボーナス</div>
+    <div id="set-bonus-info" style="font-size:10px;color:#ff88ff;line-height:1.7"></div>
   </div>
   <div id="cw">
     <canvas id="c"></canvas>
@@ -393,16 +395,101 @@ function calcCT(w){
   if(w.isUR)return 60;
   if(w.special==='fixedCT')return 300;
   const lvRed=1-Math.min(G.lv-1,15)*.03;
-  const bonusPct=(w.bonus&&w.bonus.key==='bonusCTpct')?w.bonus.val:0;
+  const bonusPct=((w.bonus&&w.bonus.key==='bonusCTpct')?w.bonus.val:0)+getSetBonusCTpct(w);
   return Math.round(Math.max(60,Math.min(300,(w.ctBaseSec*RMUL[w.ri]*.6*lvRed*(1-bonusPct)-G.upgCT*.25)*60)));
 }
-function getTrail(w){return w.trailLen+(w.bonus&&w.bonus.key==='bonusTrail'?w.bonus.val:0)+(w.bonusTrail||0)+G.upgTrail*20;}
-function getThick(w){return w.thick+(w.bonus&&w.bonus.key==='bonusThick'?w.bonus.val:0)+(w.bonusThick||0)+G.upgThick;}
-function getAtk(w)  {return w.atk+(w.bonus&&w.bonus.key==='bonusAtk'?w.bonus.val:0)+(w.bonusHP?0:0)+(w.isUR?40:0)+G.upgAtk*8;}
+function getTrail(w){return w.trailLen+(w.bonus&&w.bonus.key==='bonusTrail'?w.bonus.val:0)+(w.bonusTrail||0)+G.upgTrail*20+getSetBonusTrail(w);}
+function getThick(w){return w.thick+(w.bonus&&w.bonus.key==='bonusThick'?w.bonus.val:0)+(w.bonusThick||0)+G.upgThick+getSetBonusThick(w);}
+function getAtk(w){return w.atk+(w.bonus&&w.bonus.key==='bonusAtk'?w.bonus.val:0)+(w.bonusHP?0:0)+(w.isUR?40:0)+G.upgAtk*8+getSetBonusAtk(w);}
 function getRange() {return G.attackRange+Math.min(G.upgRange,5)*30;}
 function getBonusCircle(w){return(w.bonus&&w.bonus.key==='bonusCircle'?w.bonus.val:0)+(w.bonusCircle||0);}
 
-// ══ ENEMY DRAWS ══
+// SSR×SSR 武器組み合わせセットボーナス
+// biA < biB で定義（0:短剣 1:直剣 2:大剣 3:魔杖 4:双剣 5:大鎌 6:魔剣）
+const SET_BONUS_TABLE={
+  '0,1':{type:'atk',  label:'🗡 刃の共鳴',    desc:'軌跡+60 クリ率+20%',      apply:(w)=>{w.setBonusTrail=60;w.setBonusCritRate=0.20;}},
+  '0,2':{type:'atk',  label:'⚔ 破壊衝動',    desc:'ATK+60 軌跡+30',          apply:(w)=>{w.setBonusAtk=60;w.setBonusTrail=30;}},
+  '0,3':{type:'mix',  label:'✨ 魔刃融合',    desc:'ATK+40 自動弾ダメ+50%',   apply:(w)=>{w.setBonusAtk=40;w.setBonusAutoShot=0.50;}},
+  '0,4':{type:'atk',  label:'⚡ 疾風の型',    desc:'CT-30% ATK+30',            apply:(w)=>{w.setBonusCTpct=0.30;w.setBonusAtk=30;}},
+  '0,5':{type:'atk',  label:'💀 大鎌の洗礼',  desc:'ATK+50 クリ率+30%',       apply:(w)=>{w.setBonusAtk=50;w.setBonusCritRate=0.30;}},
+  '0,6':{type:'atk',  label:'💀 闇の刃',      desc:'クリ率+50% クリ倍率+30%', apply:(w)=>{w.setBonusCritRate=0.50;w.setBonusCritMul=0.30;}},
+  '1,2':{type:'def',  label:'🛡 重鎧の誓い',  desc:'MaxHP+180 被ダメ-12%',    apply:(w)=>{w.setBonusHP=180;w.setBonusDmgRed=0.12;}},
+  '1,3':{type:'greed',label:'📚 知識の渇望',  desc:'XP+60% LvUP時ATK+8',     apply:(w)=>{w.setBonusXPpct=0.60;w.setBonusLvAtk=8;}},
+  '1,4':{type:'atk',  label:'⚡ 連続の極み',  desc:'CT-20% クリ率+30%',       apply:(w)=>{w.setBonusCTpct=0.20;w.setBonusCritRate=0.30;}},
+  '1,5':{type:'def',  label:'🛡 鉄壁の意志',  desc:'MaxHP+200 被ダメ-15%',    apply:(w)=>{w.setBonusHP=200;w.setBonusDmgRed=0.15;}},
+  '1,6':{type:'def',  label:'🔰 聖盾の加護',  desc:'MaxHP+150 バリアCD-8s',   apply:(w)=>{w.setBonusHP=150;w.setBonusShieldCD=-480;}},
+  '2,3':{type:'atk',  label:'💥 滅殺の陣',    desc:'ATK+80 囲みダメ+50%',     apply:(w)=>{w.setBonusAtk=80;w.setBonusCircleDmg=0.50;}},
+  '2,4':{type:'atk',  label:'🌊 烈風斬',      desc:'軌跡+80 太さ+4',          apply:(w)=>{w.setBonusTrail=80;w.setBonusThick=4;}},
+  '2,5':{type:'atk',  label:'🔥 覇王の一閃',  desc:'ATK+100 CT+10%',          apply:(w)=>{w.setBonusAtk=100;w.setBonusCTpen=0.10;}},
+  '2,6':{type:'atk',  label:'🌑 冥府の力',    desc:'ATK+50 被ダメ-10% クリ倍率+30%', apply:(w)=>{w.setBonusAtk=50;w.setBonusDmgRed=0.10;w.setBonusCritMul=0.30;}},
+  '3,4':{type:'mix',  label:'🔮 魔弾連撃',    desc:'クリ率+25% 自動弾ダメ+40%', apply:(w)=>{w.setBonusCritRate=0.25;w.setBonusAutoShot=0.40;}},
+  '3,5':{type:'greed',label:'💰 強欲の陣',    desc:'ゴールド+60% ATK+40',     apply:(w)=>{w.setBonusGoldPct=0.60;w.setBonusAtk=40;}},
+  '3,6':{type:'greed',label:'💰 強欲の魂',    desc:'ゴールド+80% XP+30%',     apply:(w)=>{w.setBonusGoldPct=0.80;w.setBonusXPpct=0.30;}},
+  '4,5':{type:'atk',  label:'🌀 無双乱舞',    desc:'軌跡+60 クリ率+35% CT-15%', apply:(w)=>{w.setBonusTrail=60;w.setBonusCritRate=0.35;w.setBonusCTpct=0.15;}},
+  '4,6':{type:'atk',  label:'💜 紫電',        desc:'クリ率+40% クリ倍率+50%', apply:(w)=>{w.setBonusCritRate=0.40;w.setBonusCritMul=0.50;}},
+  '5,6':{type:'atk',  label:'☠ 死神の鎌',    desc:'ATK+70 クリ倍率+60% 被ダメ-8%', apply:(w)=>{w.setBonusAtk=70;w.setBonusCritMul=0.60;w.setBonusDmgRed=0.08;}},
+};
+
+function getSetBonusKey(weapons){
+  const ssrs=weapons.filter(w=>w.ri===3&&!w.isUR);
+  if(ssrs.length<2)return null;
+  const [a,b]=ssrs.slice(0,2).map(w=>w.bi).sort((x,y)=>x-y);
+  return a+','+b;
+}
+
+function checkAndApplySetBonus(){
+  const key=getSetBonusKey(G.weapons);
+  const ssrs=G.weapons.filter(w=>w.ri===3&&!w.isUR);
+  if(!key||ssrs.length<2){
+    G.weapons.forEach(w=>clearSetBonus(w));
+    G.activeSetBonus=null;
+    return;
+  }
+  if(G.activeSetBonus===key)return;
+  // リセット
+  G.weapons.forEach(w=>clearSetBonus(w));
+  G.activeSetBonus=key;
+  const sb=SET_BONUS_TABLE[key];
+  if(!sb){G.activeSetBonus=null;return;}
+  // 3本目（SSRでない武器）に付与、なければ最初のSSRに付与
+  const target=G.weapons.find(w=>w.ri!==3||w.isUR)||G.weapons[2]||G.weapons[0];
+  sb.apply(target);
+  target.setBonus=sb;
+  log(`✨ セットボーナス発動：${sb.label}（${target.name}に付与）`,'le');
+  showSub(`✨ ${sb.label}`);
+  applySetBonusStats();
+  renderWList();
+}
+
+function clearSetBonus(w){
+  delete w.setBonusAtk;delete w.setBonusTrail;delete w.setBonusThick;
+  delete w.setBonusCritRate;delete w.setBonusCritMul;delete w.setBonusCTpct;
+  delete w.setBonusHP;delete w.setBonusDmgRed;delete w.setBonusRegenIv;
+  delete w.setBonusRegenPct;delete w.setBonusShieldCD;delete w.setBonusGhostDur;
+  delete w.setBonusGoldPct;delete w.setBonusXPpct;delete w.setBonusLvAtk;
+  delete w.setBonusRarePct;delete w.setBonus;
+}
+
+function applySetBonusStats(){
+  // HP・CD・再生ボーナスを即時反映
+  G.weapons.forEach(w=>{
+    if(w.setBonusHP){G.maxHp+=w.setBonusHP;G.hp=Math.min(G.maxHp,G.hp+w.setBonusHP);}
+    if(w.setBonusShieldCD)G.shieldCDMax=Math.max(300,G.shieldCDMax+w.setBonusShieldCD);
+    if(w.setBonusGhostDur)G.ghostDur+=w.setBonusGhostDur;
+  });
+}
+
+function getSetBonusAtk(w){return w.setBonusAtk||0;}
+function getSetBonusTrail(w){return w.setBonusTrail||0;}
+function getSetBonusThick(w){return w.setBonusThick||0;}
+function getSetBonusCritRate(w){return w.setBonusCritRate||0;}
+function getSetBonusCritMul(w){return w.setBonusCritMul||0;}
+function getSetBonusCTpct(w){return w.setBonusCTpct||0;}
+function getSetBonusGoldMul(){return G.weapons.reduce((a,w)=>a+(w.setBonusGoldPct||0),0);}
+function getSetBonusXPmul(){return G.weapons.reduce((a,w)=>a+(w.setBonusXPpct||0),0);}
+function getSetBonusDmgRed(){return G.weapons.reduce((a,w)=>a+(w.setBonusDmgRed||0),0);}
+
+
 function drawSlime(c,x,y,r,col,fl){const fc=fl?'#fff':col;c.save();c.fillStyle=fc;c.beginPath();c.ellipse(x,y+r*.1,r*.95,r*.8,0,0,Math.PI*2);c.fill();c.beginPath();c.ellipse(x-r*.3,y-r*.5,r*.3,r*.28,-.3,0,Math.PI*2);c.fill();c.beginPath();c.ellipse(x+r*.25,y-r*.52,r*.28,r*.26,.3,0,Math.PI*2);c.fill();c.fillStyle='#fff';c.beginPath();c.ellipse(x-r*.28,y-.05*r,r*.22,r*.25,0,0,Math.PI*2);c.fill();c.beginPath();c.ellipse(x+r*.28,y-.05*r,r*.22,r*.25,0,0,Math.PI*2);c.fill();c.fillStyle='#222';c.beginPath();c.arc(x-r*.28,y+.02*r,r*.11,0,Math.PI*2);c.fill();c.beginPath();c.arc(x+r*.28,y+.02*r,r*.11,0,Math.PI*2);c.fill();c.restore();}
 function drawBat(c,x,y,r,col,fl){const fc=fl?'#fff':col;c.save();c.fillStyle=fc;c.beginPath();c.moveTo(x,y);c.bezierCurveTo(x-r*1.4,y-r*.6,x-r*1.6,y+r*.4,x-r*.5,y+r*.2);c.closePath();c.fill();c.beginPath();c.moveTo(x,y);c.bezierCurveTo(x+r*1.4,y-r*.6,x+r*1.6,y+r*.4,x+r*.5,y+r*.2);c.closePath();c.fill();c.beginPath();c.ellipse(x,y,r*.45,r*.55,0,0,Math.PI*2);c.fill();c.beginPath();c.moveTo(x-r*.3,y-r*.4);c.lineTo(x-r*.15,y-r*.9);c.lineTo(x,y-r*.4);c.closePath();c.fill();c.beginPath();c.moveTo(x+r*.3,y-r*.4);c.lineTo(x+r*.15,y-r*.9);c.lineTo(x,y-r*.4);c.closePath();c.fill();c.fillStyle='#f22';c.beginPath();c.arc(x-r*.18,y-.1*r,r*.1,0,Math.PI*2);c.fill();c.beginPath();c.arc(x+r*.18,y-.1*r,r*.1,0,Math.PI*2);c.fill();c.restore();}
 function drawGoblin(c,x,y,r,col,fl){const fc=fl?'#fff':col;c.save();c.fillStyle=fc;c.beginPath();c.ellipse(x,y+r*.2,r*.55,r*.65,0,0,Math.PI*2);c.fill();c.beginPath();c.ellipse(x,y-r*.35,r*.55,r*.5,0,0,Math.PI*2);c.fill();c.beginPath();c.ellipse(x-r*.6,y-r*.35,r*.22,r*.3,-.3,0,Math.PI*2);c.fill();c.beginPath();c.ellipse(x+r*.6,y-r*.35,r*.22,r*.3,.3,0,Math.PI*2);c.fill();c.fillStyle='#ffe04a';c.beginPath();c.ellipse(x-r*.22,y-r*.38,r*.14,r*.17,0,0,Math.PI*2);c.fill();c.beginPath();c.ellipse(x+r*.22,y-r*.38,r*.14,r*.17,0,0,Math.PI*2);c.fill();c.fillStyle='#111';c.beginPath();c.arc(x-r*.22,y-r*.37,r*.07,0,Math.PI*2);c.fill();c.beginPath();c.arc(x+r*.22,y-r*.37,r*.07,0,Math.PI*2);c.fill();c.strokeStyle=fc;c.lineWidth=r*.25;c.lineCap='round';c.beginPath();c.moveTo(x+r*.5,y);c.lineTo(x+r*1.1,y-r*.3);c.stroke();c.fillStyle='#a0522d';c.beginPath();c.ellipse(x+r*1.2,y-r*.4,r*.2,r*.28,.5,0,Math.PI*2);c.fill();c.restore();}
@@ -580,7 +667,8 @@ function initG(){
     cd:0,cdMax:150,twinFirstHit:false,trail:[],drawing:false,
     battle:null,tick:0,bossDefeated:false,circleCt:3,playerFlash:0,
     pendingWeapon:null,zarkaelReady:false,mermaidDefeated:false,
-    charmed:false,charmedTimer:0, // 魅了（移動反転）
+    charmed:false,charmedTimer:0,
+    activeSetBonus:null, // 魅了（移動反転）
   };
 }
 
@@ -769,7 +857,13 @@ function drawBattle(){
     ctx2.restore();
   }
   ctx2.globalAlpha=1;
-  b.dnums.forEach(d=>{ctx2.fillStyle=`rgba(${d.big?'255,200,0':'255,160,80'},${d.life/45})`;ctx2.font=`bold ${d.big?20:13}px monospace`;ctx2.textAlign='center';ctx2.textBaseline='middle';ctx2.fillText(d.text,d.x,d.y);});
+  b.dnums.forEach(d=>{
+    const al=d.life/45;
+    if(d.crit){ctx2.fillStyle=`rgba(255,220,0,${al})`;ctx2.shadowColor='#ffdd00';ctx2.shadowBlur=12;}
+    else{ctx2.fillStyle=`rgba(${d.big?'255,200,0':'255,160,80'},${al})`;ctx2.shadowBlur=0;}
+    ctx2.font=`bold ${d.big?20:13}px monospace`;ctx2.textAlign='center';ctx2.textBaseline='middle';
+    ctx2.fillText(d.text,d.x,d.y);ctx2.shadowBlur=0;
+  });
   if(IMGS['player']){
     if(G.playerFlash>0)ctx2.globalAlpha=0.5;
     const sp=getCachedSprite('player',120);
@@ -942,6 +1036,9 @@ window.closeOv=function(){G.paused=false;document.getElementById('overlay').styl
 function takeDamage(d,src){
   if(G.ghostTimer>0){log('👻 幽体化無効！','li');return;}
   if(G.abilities.includes('shield')&&G.shieldTimer>0){G.shieldTimer=0;G.shieldCD=G.shieldCDMax;log('🛡 バリア！','li');return;}
+  // セットボーナス：ダメージ軽減
+  const dmgRed=getSetBonusDmgRed();
+  if(dmgRed>0)d=Math.max(1,Math.round(d*(1-dmgRed)));
   G.hp=Math.max(0,G.hp-d);G.playerFlash=18;sndDamage();log((src||'敵')+' -'+d,'c');
   if(G.abilities.includes('ghost')&&G.ghostCD<=0){G.ghostTimer=G.ghostDur;G.ghostCD=G.ghostCDMax;}
   if(G.hp<=0){if(G.phase==='battle')endBattle(false);else die();}
@@ -952,24 +1049,72 @@ function shopCost(t){const c={heal:Math.round(30+G.lv*5),atk:Math.round(40+G.upg
 function openShop(){sndShop();renderShop();}
 function renderShop(){
   const ov=document.getElementById('overlay');
-  const items=[{type:'heal',label:'💊 HP全回復'},{type:'atk',label:`⚔ ATK+8 (Lv${G.upgAtk})`},{type:'ct',label:`⏱ CT-0.25s (Lv${G.upgCT})`},{type:'trail',label:`〰 軌跡+20 (Lv${G.upgTrail})`},{type:'thick',label:`◉ 太さ+1 (Lv${G.upgThick})`},{type:'range',label:`📏 射程+30 (Lv${G.upgRange}/5)`,disabled:G.upgRange>=5}];
-  const rows=items.map(it=>{const cost=shopCost(it.type);const ok=G.gold>=cost&&!it.disabled;return`<div class="shop-row"><span>${it.label}</span><button class="shop-btn"${ok?'':' disabled'} onclick="shopBuy('${it.type}')">${it.disabled?'MAX':cost+'G'}</button></div>`;}).join('');
 
-  // ── 修正③: ランダム能力付与 5000G ──
-  const randomAbilityOk = G.gold >= 5000;
-  const alreadyAll = ALL_ABILITIES.every(a => G.abilities.includes(a.id));
-  const randomRow = alreadyAll ? '' : `<div class="shop-row"><span>🎲 ランダム能力付与<br><span style="font-size:10px;color:#8b949e">上限+1・LvUP時強化対象に</span></span><button class="shop-btn"${randomAbilityOk?'':' disabled'} onclick="shopBuy('randomAbility')">5000G</button></div>`;
+  // 左カラム：従来商品
+  const items=[
+    {type:'heal', label:'💊 HP全回復'},
+    {type:'atk',  label:`⚔ ATK+8 (Lv${G.upgAtk})`},
+    {type:'ct',   label:`⏱ CT-0.25s (Lv${G.upgCT})`},
+    {type:'trail',label:`〰 軌跡+20 (Lv${G.upgTrail})`},
+    {type:'thick',label:`◉ 太さ+1 (Lv${G.upgThick})`},
+    {type:'range',label:`📏 射程+30 (Lv${G.upgRange}/5)`,disabled:G.upgRange>=5},
+  ];
+  const leftRows=items.map(it=>{
+    const cost=shopCost(it.type);const ok=G.gold>=cost&&!it.disabled;
+    return`<div class="shop-row"><span>${it.label}</span><button class="shop-btn"${ok?'':' disabled'} onclick="shopBuy('${it.type}')">${it.disabled?'MAX':cost+'G'}</button></div>`;
+  }).join('');
 
-  // ── 追加: ランダム能力強化 10000G ──
-  const randomUpgradeOk = G.gold >= 10000 && G.abilities.length > 0;
-  const upgradeRow = G.abilities.length === 0 ? '' :
-    `<div class="shop-row"><span>⚡ ランダム能力強化<br><span style="font-size:10px;color:#8b949e">所持能力をランダムに1段階強化</span></span><button class="shop-btn"${randomUpgradeOk?'':' disabled'} onclick="shopBuy('randomUpgrade')">10000G</button></div>`;
+  const randomAbilityOk=G.gold>=5000;
+  const alreadyAll=ALL_ABILITIES.every(a=>G.abilities.includes(a.id));
+  const randomRow=alreadyAll?'':`<div class="shop-row"><span>🎲 ランダム能力付与<br><span style="font-size:10px;color:#8b949e">上限+1・LvUP時強化対象に</span></span><button class="shop-btn"${randomAbilityOk?'':' disabled'} onclick="shopBuy('randomAbility')">5000G</button></div>`;
+
+  const randomUpgradeOk=G.gold>=10000&&G.abilities.length>0;
+  const upgradeRow=G.abilities.length===0?'':`<div class="shop-row"><span>⚡ ランダム能力強化<br><span style="font-size:10px;color:#8b949e">所持能力をランダムに1段階強化</span></span><button class="shop-btn"${randomUpgradeOk?'':' disabled'} onclick="shopBuy('randomUpgrade')">10000G</button></div>`;
 
   const hasBokire=G.weapons.some(w=>w.isBokire);
-  const bokireRow=hasBokire?'':`<div class="shop-row"><span>🪵 棒きれ<br><span style="font-size:10px;color:#8b949e">敵200体撃破 & Mermaid討伐 → UR棒振りに進化</span></span><button class="shop-btn" onclick="shopBuy('bokire')">1G</button></div>`;
-  ov.innerHTML=`<h2 style="font-size:16px;color:#58a6ff">🛒 ショップ</h2><p style="color:#ffd700;font-size:13px;margin:-4px 0 2px">所持金：${G.gold}G</p><div style="width:280px;background:#0d1117;border-radius:6px;padding:8px 10px">${rows}${randomRow}${upgradeRow}${bokireRow}</div><button onclick="closeOv()">閉じる</button>`;
+  const bokireRow=hasBokire?'':`<div class="shop-row"><span>🪵 棒きれ<br><span style="font-size:10px;color:#8b949e">敵200体 & Mermaid討伐でUR進化</span></span><button class="shop-btn" onclick="shopBuy('bokire')">1G</button></div>`;
+
+  // 右カラム：SSR武器（500G）
+  const ssrWeapons=W_BASES.map((wb,bi)=>({bi,name:wb.name}));
+  const rightRows=ssrWeapons.map(({bi,name})=>{
+    const ok=G.gold>=500&&G.weapons.length<3||G.gold>=500;
+    const col=RCOL[3]||'#cc8800';
+    return`<div class="shop-row"><span style="color:${col}">⚔ ${name}<span style="font-size:9px;color:#888"> [SSR]</span></span><button class="shop-btn"${G.gold>=500?'':' disabled'} onclick="shopBuyWeapon(${bi})">500G</button></div>`;
+  }).join('');
+
+  ov.innerHTML=`
+    <h2 style="font-size:16px;color:#58a6ff">🛒 ショップ</h2>
+    <p style="color:#ffd700;font-size:13px;margin:-4px 0 4px">所持金：${G.gold}G</p>
+    <div style="display:flex;gap:10px;align-items:flex-start">
+      <div style="background:#0d1117;border-radius:6px;padding:8px 10px;min-width:220px">
+        <div style="font-size:10px;color:#8b949e;margin-bottom:4px">━ 消耗品・強化 ━</div>
+        ${leftRows}${randomRow}${upgradeRow}${bokireRow}
+      </div>
+      <div style="background:#0d1117;border-radius:6px;padding:8px 10px;min-width:160px">
+        <div style="font-size:10px;color:#cc8800;margin-bottom:4px">━ SSR武器 ━</div>
+        <div style="font-size:9px;color:#555;margin-bottom:4px">セット効果：SSR×SSRで発動</div>
+        ${rightRows}
+      </div>
+    </div>
+    <button onclick="closeOv()" style="margin-top:6px">閉じる</button>`;
   ov.style.display='flex';
 }
+window.shopBuyWeapon=function(bi){
+  if(G.gold<500)return;
+  G.gold-=500;
+  const w=mkW(bi,3); // SSRレアリティで生成
+  sndWeaponGet(3);
+  log('⚔ '+w.name+'[SSR] 購入！','le');
+  if(G.weapons.length<3){
+    G.weapons.push(w);
+    checkAndApplySetBonus();
+    renderWList();renderShop();
+  } else {
+    G.pendingWeapon=w;
+    G.pendingFromShop=true;
+    showDiscardChoice(w);
+  }
+};
 window.shopBuy=function(type){
   if(type==='range'&&G.upgRange>=5){return;}
   if(type==='bokire'){
@@ -1041,6 +1186,7 @@ window.chooseW=function(i){
   if(w.bonus&&w.bonus.key==='bonusHP'){G.maxHp+=w.bonus.val;G.hp=Math.min(G.maxHp,G.hp+w.bonus.val);}
   if(G.weapons.length<3){
     G.weapons.push(w);renderWList();sndWeaponGet(w.ri);log('⚔ '+w.name+'['+w.rar+']','li');
+    checkAndApplySetBonus();
     G.paused=false;document.getElementById('overlay').style.display='none';
   } else {
     G.pendingWeapon=w;document.getElementById('overlay').style.display='none';showDiscardChoice(w);
@@ -1055,12 +1201,23 @@ function showDiscardChoice(newW){
 }
 window.discardW=function(i){
   const w=G.pendingWeapon;G.pendingWeapon=null;sndDiscard();
+  const fromShop=G.pendingFromShop;G.pendingFromShop=false;
   log('🗑 '+G.weapons[i].name+'を捨てた','lm');G.weapons[i]=w;
   if(G.sel===i)G.cdMax=calcCT(w);
+  G.activeSetBonus=null;
+  G.weapons.forEach(ww=>clearSetBonus(ww));
   renderWList();sndWeaponGet(w.ri);log('⚔ '+w.name+'['+w.rar+']','li');
-  G.paused=false;document.getElementById('overlay').style.display='none';
+  checkAndApplySetBonus();
+  G.paused=false;
+  if(fromShop){renderShop();}
+  else{document.getElementById('overlay').style.display='none';}
 };
-window.cancelDiscard=function(){G.pendingWeapon=null;G.paused=false;document.getElementById('overlay').style.display='none';};
+window.cancelDiscard=function(){
+  G.pendingWeapon=null;G.paused=false;
+  const fromShop=G.pendingFromShop;G.pendingFromShop=false;
+  if(fromShop){renderShop();}
+  else{document.getElementById('overlay').style.display='none';}
+};
 function renderWList(){
   const el=document.getElementById('weapon-list');el.innerHTML='';
   G.weapons.forEach((w,i)=>{const rc=w.isUR?'#ff2200':RCOL[w.ri]||'#aaa';
@@ -1070,7 +1227,46 @@ function renderWList(){
       const mDone=G.mermaidDefeated?'<span style="color:#00cccc">✓Mermaid</span>':'<span style="color:#ff6699">✗Mermaid</span>';
       killStr=` <span style="color:#888;font-size:9px">${kc}/200 ${mDone}</span>`;
     }
-    const b=document.createElement('button');b.className='wb'+(i===G.sel?' active':'');b.innerHTML=`<span style="color:${rc};font-weight:bold">${w.name}</span><span style="color:${rc};font-size:9px"> [${w.rar}]</span>${w.ability?'<span style="color:#cc88ff"> ✦</span>':''}${killStr}<br><span style="color:#8b949e;font-size:9px">ATK+${getAtk(w)} CT${(calcCT(w)/60).toFixed(1)}s</span>`;b.onclick=()=>{G.sel=i;G.cdMax=calcCT(G.weapons[i]);G.twinFirstHit=false;renderWList();updateEqInfo();};el.appendChild(b);});
+    const setBonusStr=w.setBonus?`<span style="color:#ff88ff;font-size:9px"> ✨${w.setBonus.label}</span>`:'';
+    // ツールチップ：セットボーナス効果
+    const tooltipLines=[w.name+' ['+w.rar+']','ATK+'+(getAtk(w))+' CT'+(calcCT(w)/60).toFixed(1)+'s'];
+    if(w.bonus)tooltipLines.push('★ '+w.bonus.label);
+    if(w.setBonus)tooltipLines.push('✨ '+w.setBonus.label+': '+w.setBonus.desc);
+    if(w.ability)tooltipLines.push('✦ 囲み攻撃');
+    if(w.special==='twin')tooltipLines.push('⚡ 2連撃');
+    const tooltip=tooltipLines.join('\n');
+    const b=document.createElement('button');
+    b.className='wb'+(i===G.sel?' active':'');
+    b.title=tooltip;
+    b.innerHTML=`<span style="color:${rc};font-weight:bold">${w.name}</span><span style="color:${rc};font-size:9px"> [${w.rar}]</span>${w.ability?'<span style="color:#cc88ff"> ✦</span>':''}${killStr}${setBonusStr}<br><span style="color:#8b949e;font-size:9px">ATK+${getAtk(w)} CT${(calcCT(w)/60).toFixed(1)}s</span>`;
+    b.onclick=()=>{G.sel=i;G.cdMax=calcCT(G.weapons[i]);G.twinFirstHit=false;renderWList();updateEqInfo();};
+    el.appendChild(b);
+  });
+  // 武器入れ替えボタン（マップ時のみ表示、武器が2本以上ある場合）
+  if(G.phase==='map'&&G.weapons.length>=2){
+    const swapDiv=document.createElement('div');
+    swapDiv.style.cssText='display:flex;gap:3px;margin-top:2px;flex-wrap:wrap;';
+    for(let a=0;a<G.weapons.length;a++){
+      for(let b2=a+1;b2<G.weapons.length;b2++){
+        const btn=document.createElement('button');
+        btn.style.cssText='font-size:9px;padding:2px 5px;background:#161b22;border:1px solid #444;color:#8b949e;cursor:pointer;border-radius:3px;';
+        btn.textContent=`↕ ${a+1}⇔${b2+1}`;
+        btn.title=`${G.weapons[a].name} と ${G.weapons[b2].name} を入れ替え`;
+        btn.onclick=(()=>{const ai=a,bi=b2;return()=>{
+          [G.weapons[ai],G.weapons[bi]]=[G.weapons[bi],G.weapons[ai]];
+          if(G.sel===ai)G.sel=bi;else if(G.sel===bi)G.sel=ai;
+          G.cdMax=calcCT(G.weapons[G.sel]);
+          // セットボーナスの付与先も再チェック
+          G.activeSetBonus=null;G.weapons.forEach(ww=>clearSetBonus(ww));
+          checkAndApplySetBonus();
+          renderWList();updateEqInfo();
+          log(`↕ ${G.weapons[bi].name}⇔${G.weapons[ai].name} 入れ替え`,'lm');
+        };})();
+        swapDiv.appendChild(btn);
+      }
+    }
+    el.appendChild(swapDiv);
+  }
   updateEqInfo();
 }
 function updateEqInfo(){
@@ -1084,6 +1280,23 @@ function updateEqInfo(){
   document.getElementById('eq-info').innerHTML=s;
   document.getElementById('ability-list').innerHTML=G.abilities.map(id=>{const a=ALL_ABILITIES.find(x=>x.id===id);if(!a)return'';const lv=G.abilityLv[id]||0;return `<div class="ab-tooltip" onmouseenter="showAbOv('${id}')" onmouseleave="hideAbOv()">${a.name} <span style="color:#e3b341">Lv${lv+1}</span></div>`;}).join('')||'なし';
   document.getElementById('upg-info').innerHTML=`ATK Lv${G.upgAtk} CT Lv${G.upgCT}<br>軌跡 Lv${G.upgTrail} 太Lv${G.upgThick}<br>射程 Lv${G.upgRange}/5`;
+  // セットボーナス表示
+  const sbEl=document.getElementById('set-bonus-info');
+  const ssrs=G.weapons.filter(w=>w.ri===3&&!w.isUR);
+  if(ssrs.length>=2&&G.activeSetBonus){
+    const bonusW=G.weapons.find(w=>w.setBonus);
+    if(bonusW){
+      const sb=bonusW.setBonus;
+      const typeCol=sb.type==='atk'?'#ff8866':sb.type==='def'?'#66bbff':'#ffd700';
+      sbEl.innerHTML=`<span style="color:#ff88ff">✨ 発動中</span><br><span style="color:${typeCol};font-weight:bold">${sb.label}</span><br><span style="color:#8b949e">${sb.desc}</span><br><span style="color:#555;font-size:9px">付与先：${bonusW.name}</span>`;
+    }
+  } else if(ssrs.length===1){
+    sbEl.innerHTML=`<span style="color:#555">SSR×SSRで<br>セットボーナス発動</span><br><span style="color:#444;font-size:9px">あと1本SSRを取得</span>`;
+  } else if(ssrs.length===0){
+    sbEl.innerHTML=`<span style="color:#333">SSR武器なし</span>`;
+  } else {
+    sbEl.innerHTML=`<span style="color:#555">待機中…</span>`;
+  }
 }
 
 // ══ LEVEL UP / ABILITY ══
@@ -1216,7 +1429,8 @@ function startBattle(cnt,isBoss){
     const hm=(1+(G.floor-1)*.05)*aM;
     const ng=G.ng||1;
     const ngBossMul=ng>=2?1+(ng-1)*1.5:1; // 2周目×2.5、3周目×4.0…
-    es.push({x:cw/2,y:ch*.15,hp:15000,maxHp:15000,atk:Math.round(bd.atk*(1+(G.floor-1)*.04)*aM*ngBossMul),xp:bd.xp,gold:bd.gold,r:bd.r,spd:bd.spd,col:bd.col,name:bd.name+(ng>=2?' 【強】':''),drawFn:bd.drawFn,isBoss:true,ability:bd.ability,flash:0,hitTimer:0,spTimer:160,burnTimer:0,slowTimer:0,finalBoss:bd.finalBoss,rare:false});
+    const bossHp=Math.round(bd.hp*hm*ngBossMul);
+    es.push({x:cw/2,y:ch*.15,hp:bossHp,maxHp:bossHp,atk:Math.round(bd.atk*(1+(G.floor-1)*.04)*aM*ngBossMul),xp:bd.xp,gold:bd.gold,r:bd.r,spd:bd.spd,col:bd.col,name:bd.name+(ng>=2?' 【強】':''),drawFn:bd.drawFn,isBoss:true,ability:bd.ability,flash:0,hitTimer:0,spTimer:160,burnTimer:0,slowTimer:0,finalBoss:bd.finalBoss,rare:false});
   } else {
     const res=buildEnemyList(cnt,aM);es=res.es;hasRare=res.hasRare;
   }
@@ -1336,10 +1550,13 @@ function shootBreath(e,b){const dx=b.px-e.x,dy=b.py-e.y,d=Math.hypot(dx,dy);if(d
 function evolveBokire(bokireW){
   const urAtk=Math.round(36*RMUL[3]*1.5);
   const urW={name:'UR棒振り',rar:'UR',ri:4,trailLen:Math.round(295*RMUL[3]),thick:Math.round(11*(1+4*.35)),atk:urAtk,ctBaseSec:1.0,col:'#ff2200',bi:-2,ability:'circle',special:'twin_autoshot',bonus:{key:'bonusAtk',label:'+ATK 40',val:40},bonusHP:50,bonusCTpct:.20,bonusTrail:80,bonusThick:5,bonusCircle:2,isBokire:true,isUR:true};
-  const idx=G.weapons.findIndex(w=>w.isBokire&&!w.isUR);
-  if(idx>=0)G.weapons[idx]=urW;
-  if(G.sel===idx){G.cdMax=calcCT(urW);}
-  renderWList();sndWeaponGet(3);showCombo('UR棒振り覚醒！');log('🔥 棒きれがUR棒振りに進化！','lb');
+  // 他の武器を全て捨て、3枠全部UR棒振りに
+  const discarded=G.weapons.filter(w=>!w.isBokire||w.isUR).map(w=>w.name);
+  if(discarded.length>0)log('🗑 '+discarded.join('・')+'を手放した…','lm');
+  G.weapons=[urW,urW,urW];
+  G.sel=0;G.cdMax=calcCT(urW);
+  G.activeSetBonus=null; // セットボーナスリセット
+  renderWList();sndWeaponGet(4);showCombo('UR棒振り覚醒！');log('🔥 棒きれがUR棒振りに進化！全武器枠を占拠！','lb');
 }
 function spawnWall(b){for(let wi=0;wi<2;wi++){const s=rnd(0,3);let wx,wy,ww,wh;if(s===0){wx=rnd(60,cw-160);wy=rnd(60,ch/2-60);ww=rnd(160,360);wh=16;}else if(s===1){wx=rnd(60,cw-160);wy=rnd(ch/2,ch-100);ww=rnd(160,360);wh=16;}else if(s===2){wx=rnd(60,cw/2-60);wy=rnd(60,ch-120);ww=16;wh=rnd(120,260);}else{wx=rnd(cw/2,cw-100);wy=rnd(60,ch-120);ww=16;wh=rnd(120,260);}b.walls.push({x:wx,y:wy,w:ww,h:wh});setTimeout(()=>{if(b&&b.walls&&b.walls.length>0)b.walls.shift();},5000);}}
 function miniTrollJump(e,b){sndJump();e.jumping=true;setTimeout(()=>{if(e)e.jumping=false;},1200);}
@@ -2539,13 +2756,26 @@ function doAttack(){
   if(hit.length>0){
     const ba=G.atk+getAtk(w);let goldGain=0;
     const hasBurn=G.abilities.includes('burn'),hasSlow=G.abilities.includes('slow'),hasDbl=G.abilities.includes('doublehit'),hasVamp=G.abilities.includes('vampire'),hasExp=G.abilities.includes('explode');
-    const expMul=G.abilities.includes('expbonus')?(1.3+(G.abilityLv.expbonus||0)*.2):1;
-    const goldMul=G.abilities.includes('goldbonus')?(1.5+(G.abilityLv.goldbonus||0)*.25):1;
+    const expMul=(G.abilities.includes('expbonus')?(1.3+(G.abilityLv.expbonus||0)*.2):1)*(1+getSetBonusXPmul());
+    const goldMul=(G.abilities.includes('goldbonus')?(1.5+(G.abilityLv.goldbonus||0)*.25):1)*(1+getSetBonusGoldMul());
+    // クリティカル率（二連撃 + セットボーナス）
+    const baseCritRate=hasDbl?(.3+(G.abilityLv.doublehit||0)*.15):0;
+    const setBonusCritRate=getSetBonusCritRate(w);
+    const totalCritRate=baseCritRate+setBonusCritRate;
+    // 100%超過分はクリティカルダメージ倍率に換算（超過10%ごとに+10%クリダメ）
+    const overCrit=Math.max(0,totalCritRate-1.0);
+    const critMulBonus=overCrit*1.0+getSetBonusCritMul(w); // 超過分1倍+セットボーナス
+    const effectiveCritRate=Math.min(1.0,totalCritRate);
     hit.forEach(e=>{
       // 台詞中は無敵
       if(e.zEnragedDialogue){b.dnums.push({x:e.x,y:e.y-e.r-8,text:'無敵',life:25,big:false});return;}
       let d=rnd(Math.round(ba*.85),Math.round(ba*1.2));
-      if(hasDbl){const prob=.3+(G.abilityLv.doublehit||0)*.15;if(Math.random()<prob)d=Math.round(d*2);}
+      // クリティカル判定
+      let isCrit=false;
+      if((hasDbl||setBonusCritRate>0)&&Math.random()<effectiveCritRate){
+        d=Math.round(d*(2+critMulBonus));
+        isCrit=true;
+      }
       // バリア処理（ザルカエル用）
       if(e.zBarrier>0){
         const absorbed=Math.min(d,e.zBarrier);
@@ -2557,7 +2787,14 @@ function doAttack(){
       e.hp-=d;e.flash=15;
       if(hasBurn)e.burnTimer=180+(G.abilityLv.burn||0)*60;
       if(hasSlow)e.slowTimer=240+(G.abilityLv.slow||0)*60;
-      b.dnums.push({x:e.x+(Math.random()-.5)*28,y:e.y-e.r-8,text:'-'+d,life:40,big:false});
+      // クリティカルエフェクト
+      if(isCrit){
+        b.dnums.push({x:e.x+(Math.random()-.5)*28,y:e.y-e.r-8,text:'⚡CRIT! -'+d,life:50,big:true,crit:true});
+        b.explosions.push({x:e.x,y:e.y,r:30,life:12,maxLife:12,col:'#ffdd00'});
+        tone(880,'square',.06,AC.currentTime,.04);tone(1320,'square',.04,AC.currentTime+.04,.04);
+      } else {
+        b.dnums.push({x:e.x+(Math.random()-.5)*28,y:e.y-e.r-8,text:'-'+d,life:40,big:false});
+      }
       if(hasVamp){const rate=.01+(G.abilityLv.vampire||0)*.01;G.hp=Math.min(G.maxHp,G.hp+Math.max(1,Math.round(d*rate)));}
       if(e.hp<=0){const xpGain=Math.round(e.xp*expMul);G.xp+=xpGain;goldGain+=Math.round(e.gold*goldMul);log('💀 '+e.name,'c');}
     });
